@@ -1,20 +1,23 @@
+import json
+import os
+import time
 from asyncio import get_event_loop
+from unittest.mock import Mock
+
+import pytest
 from jupyterhub.objects import Hub, Server
 from jupyterhub.orm import Spawner
 from kubernetes.client.models import (
-    V1SecurityContext, V1Container, V1Capabilities, V1Pod
+    V1SecurityContext,
+    V1Container,
+    V1Capabilities,
+    V1Pod,
 )
-from kubespawner import KubeSpawner
 from traitlets.config import Config
-from unittest.mock import Mock
-import json
-import os
-import pytest
 
-def sync_wait(future):
-    loop = get_event_loop()
-    loop.run_until_complete(future)
-    return future.result()
+from kubespawner import KubeSpawner
+
+from conftest import ExecError
 
 
 class MockUser(Mock):
@@ -96,22 +99,116 @@ def test_spawner_values():
     assert spawner.fs_gid == None
 
 
+def check_up(url):
+    """Check that a url responds with a non-error code"""
+    from urllib import request
+    # disable redirects (this would be easier if we ran exec in an image with requests)
+    class NoRedirect(request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    opener = request.build_opener(NoRedirect)
+    try:
+        u = opener.open(url)
+    except request.HTTPError as e:
+        if e.status >= 400:
+            raise
+        u = e
+    print(u.status)
+
+
 @pytest.mark.asyncio
-async def test_spawn(kube_ns, kube_client, config):
-    spawner = KubeSpawner(hub=Hub(), user=MockUser(), config=config)
+async def test_spawn_start(kube_ns, kube_client, config, hub_pod, exec_python):
+    print(hub_pod)
+    spawner = KubeSpawner(
+        hub=Hub(ip=hub_pod.status.pod_ip),
+        user=MockUser(),
+        config=config,
+        api_token="abc123",
+        oauth_client_id="unused",
+    )
     # empty spawner isn't running
     status = await spawner.poll()
-    assert isinstance(status, int)
+    # assert isinstance(status, int)
+
+    pod_name = spawner.pod_name
 
     # start the spawner
-    await spawner.start()
+    url = await spawner.start()
+
     # verify the pod exists
     pods = kube_client.list_namespaced_pod(kube_ns).items
     pod_names = [p.metadata.name for p in pods]
-    assert "jupyter-%s" % spawner.user.name in pod_names
+    assert pod_name in pod_names
+
+    # pod should be running when start returns
+    pod = kube_client.read_namespaced_pod(namespace=kube_ns, name=pod_name)
+    assert pod.status.phase == "Running"
+
     # verify poll while running
     status = await spawner.poll()
     assert status is None
+
+    # make sure spawn url is correct
+    r = exec_python(check_up, {"url": url})
+    assert r == "302"
+
+    # stop the pod
+    await spawner.stop()
+
+    # verify pod is gone
+    pods = kube_client.list_namespaced_pod(kube_ns).items
+    pod_names = [p.metadata.name for p in pods]
+    assert pod_name not in pod_names
+
+    # verify exit status
+    status = await spawner.poll()
+    assert isinstance(status, int)
+
+
+@pytest.mark.asyncio
+async def test_spawn_internal_ssl(kube_ns, kube_client, ssl_app, hub_pod_ssl, config, exec_python):
+    print(hub_pod_ssl)
+    spawner = KubeSpawner(
+        config=config,
+        hub=Hub(proto="https", ip="{name}.{namespace}.svc.cluster.local"),
+        user=MockUser(),
+        api_token="abc123",
+        oauth_client_id="unused",
+        internal_ssl=True,
+        internal_trust_bundles=ssl_app.internal_trust_bundles,
+        internal_certs_location=ssl_app.internal_certs_location,
+    )
+
+    # initialize ssl config
+    hub_paths = await spawner.create_certs()
+    spawner.cert_paths = await spawner.move_certs(hub_paths)
+
+    # start the spawner
+    url = await spawner.start()
+    pod_name = "jupyter-%s" % spawner.user.name
+    # verify the pod exists
+    pods = kube_client.list_namespaced_pod(kube_ns).items
+    pod_names = [p.metadata.name for p in pods]
+    assert pod_name in pod_names
+    # verify poll while running
+    status = await spawner.poll()
+    assert status is None
+
+    # verify service and secret exist
+    secret_name = spawner.secret_name
+    secrets = kube_client.list_namespaced_secret(kube_ns).items
+    secret_names = [s.metadata.name for s in secrets]
+    assert secret_name in secret_names
+
+    service_name = pod_name
+    services = kube_client.list_namespaced_service(kube_ns).items
+    service_names = [s.metadata.name for s in services]
+    assert service_name in service_names
+
+    # make sure spawn url is correct
+    r = exec_python(check_up, {"url": url})
+    assert r == "302"
+
     # stop the pod
     await spawner.stop()
 
@@ -120,9 +217,14 @@ async def test_spawn(kube_ns, kube_client, config):
     pod_names = [p.metadata.name for p in pods]
     assert "jupyter-%s" % spawner.user.name not in pod_names
 
-    # verify exit status
-    status = await spawner.poll()
-    assert isinstance(status, int)
+    # verify service and secret are gone
+    secrets = kube_client.list_namespaced_secret(kube_ns).items
+    secret_names = [s.metadata.name for s in secrets]
+    assert secret_name not in secret_names
+
+    services = kube_client.list_namespaced_service(kube_ns).items
+    service_names = [s.metadata.name for s in services]
+    assert service_name not in service_names
 
 
 @pytest.mark.asyncio
