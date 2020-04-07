@@ -1,12 +1,8 @@
 """
 Test functions used to create k8s objects
 """
-<<<<<<< HEAD
 from kubernetes.client import ApiClient
 from kubespawner.objects import make_ingress, make_pod, make_pvc
-
-=======
->>>>>>> 4f76f0d... add support for internal_ssl jupyterhub configuration to support ssl
 
 api_client = ApiClient()
 
@@ -1627,7 +1623,8 @@ def test_make_pod_with_ssl():
         cmd=['jupyterhub-singleuser'],
         port=8888,
         image_pull_policy='IfNotPresent',
-        ssl_secret_name='ssl'
+        ssl_secret_name='ssl',
+        ssl_secret_mount_path="/etc/jupyterhub/ssl/"
     )) == {
         "metadata": {
             "name": "ssl",
