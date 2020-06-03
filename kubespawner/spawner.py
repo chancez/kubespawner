@@ -1550,14 +1550,14 @@ class KubeSpawner(Spawner):
         )
         return is_running
 
-    def is_pod_creating(self, pod):
+    def pod_has_uid(self, pod):
         """
         Check if the given pod exists and has a UID
 
         pod must be a dictionary representing a Pod kubernetes API object.
         """
 
-        return pod and pod.metadata and pod.metadata.uid
+        return bool(pod and pod.metadata and pod.metadata.uid)
 
     def get_state(self):
         """
@@ -1911,10 +1911,14 @@ class KubeSpawner(Spawner):
 
 
         if self.cert_paths:
-            yield exponential_backoff(
-                lambda: self.is_pod_creating(self.pod_reflector.pods.get(self.pod_name, None)),
-                'pod/%s does not exist!' % (self.pod_name),
-            )
+            try:
+                yield exponential_backoff(
+                    lambda: self.pod_has_uid(self.pod_reflector.pods.get(self.pod_name, None)),
+                    'pod/%s does not exist!' % (self.pod_name),
+                )
+            except TimeoutError:
+                yield self.stop(True)
+                raise
 
             pod = self.pod_reflector.pods[self.pod_name]
             owner_reference = make_owner_reference(self.pod_name, pod.metadata.uid)
