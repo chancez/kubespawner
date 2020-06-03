@@ -191,7 +191,7 @@ class KubeSpawner(Spawner):
 
         # runs during both test and normal execution
         self.pod_name = self._expand_user_properties(self.pod_name_template)
-        self.dns_name = self.dns_name_template.format(namespace=self.namespace, service=self.pod_name)
+        self.dns_name = self.dns_name_template.format(namespace=self.namespace, name=self.pod_name)
         self.secret_name = None
 
 
@@ -315,7 +315,7 @@ class KubeSpawner(Spawner):
     )
 
     dns_name_template = Unicode(
-        '{service}.{namespace}.svc.cluster.local',
+        '{name}.{namespace}.svc.cluster.local',
         config=True,
         help="""
         Template to use to form the dns name for the pod.
@@ -1406,6 +1406,39 @@ class KubeSpawner(Spawner):
         annotations.update(extra_annotations)
         return annotations
 
+    get_pod_url = Callable(
+        default_value=None,
+        allow_none=True,
+        config=True,
+        help="""Callable to retrieve pod url
+
+        Called with (spawner, pod)
+
+        Must not be async
+        """,
+    )
+    def _get_pod_url(self, pod):
+        """Return the pod url
+
+        Default: use pod.status.pod_ip
+        """
+        if self.get_pod_url is None:
+            if getattr(self, "internal_ssl", False):
+                proto = "https"
+                hostname = self.dns_name
+            else:
+                proto = "http"
+                hostname = pod.status.pod_ip
+
+            return "{}://{}:{}".format(
+                proto,
+                hostname,
+                self.port,
+            )
+        else:
+            return self.get_pod_url(self, pod)
+
+
     @gen.coroutine
     def get_pod_manifest(self):
         """
@@ -1950,7 +1983,7 @@ class KubeSpawner(Spawner):
                     )
                 except ApiException as e:
                     if e.status == 409:
-                        self.log.info("Service " + self.pod_name + " already exists, so did not create new service.")
+                        self.log.warning("Service " + self.pod_name + " already exists, so did not create new service.")
                     else:
                         raise
             except Exception:
@@ -1995,8 +2028,7 @@ class KubeSpawner(Spawner):
                     ]
                 ),
             )
-
-        return (self.dns_name, self.port)
+        return self._get_pod_url(pod)
 
     @gen.coroutine
     def stop(self, now=False):
