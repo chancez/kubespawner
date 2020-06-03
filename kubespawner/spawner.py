@@ -1426,7 +1426,7 @@ class KubeSpawner(Spawner):
         if self.cmd:
             real_cmd = self.cmd + self.get_args()
         else:
-            real_cmd = self.get_args()
+            real_cmd = None
 
         labels = self._build_pod_labels(self._expand_all(self.extra_labels))
         annotations = self._build_common_annotations(self._expand_all(self.extra_annotations))
