@@ -1817,7 +1817,7 @@ class KubeSpawner(Spawner):
         """Overrides the base class Spawner's function to set the DNS names the
         certificate should be valid for before they are created."""
         self.secret_name = self._expand_user_properties(self.secret_name_template)
-        self.ssl_alt_names.append("DNS:"+self.dns_name)
+        self.ssl_alt_names.append("DNS:" + self.dns_name)
         self.ssl_alt_names_include_local=False
 
         return super().create_certs()
@@ -1910,49 +1910,45 @@ class KubeSpawner(Spawner):
                 'Can not create user pod %s already exists & could not be deleted' % self.pod_name)
 
 
-        if self.cert_paths:
+        if self.internal_ssl:
+            # internal ssl, create secret object
             try:
+                # wait for pod to have uid,
+                # required for creating owner reference
                 yield exponential_backoff(
                     lambda: self.pod_has_uid(self.pod_reflector.pods.get(self.pod_name, None)),
-                    'pod/%s does not exist!' % (self.pod_name),
+                    'pod/%s does not have a uid!' % (self.pod_name),
                 )
-            except TimeoutError:
-                yield self.stop(True)
-                raise
 
-            pod = self.pod_reflector.pods[self.pod_name]
-            owner_reference = make_owner_reference(self.pod_name, pod.metadata.uid)
-            for i in range(retry_times):
+                pod = self.pod_reflector.pods[self.pod_name]
+                owner_reference = make_owner_reference(self.pod_name, pod.metadata.uid)
+
                 try:
                     yield self.asynchronize(
                         self.api.create_namespaced_secret,
                         namespace=self.namespace,
-                        body=self.get_secret_manifest(owner_reference)
+                        body=self.get_secret_manifest(owner_reference),
                     )
                 except ApiException as e:
                     if e.status == 409:
-                        self.log.info("Secret " + self.secret_name + " already exists, so did not create new secret.")
+                        self.log.warning("Re-using existing secret " + self.secret_name)
                     else:
                         raise
-            else:
-                raise Exception(
-                    'Can not create user secret %s already exists & could not be deleted' % self.secret_name)
-
-            for i in range(retry_times):
                 try:
                     yield self.asynchronize(
                         self.api.create_namespaced_service,
                         namespace=self.namespace,
-                        body=self.get_service_manifest(owner_reference)
+                        body=self.get_service_manifest(owner_reference),
                     )
                 except ApiException as e:
                     if e.status == 409:
                         self.log.info("Service " + self.pod_name + " already exists, so did not create new service.")
                     else:
                         raise
-            else:
-                raise Exception(
-                    'Can not create user service %s already exists & could not be deleted' % self.pod_name)
+            except Exception:
+                # cleanup on failure and re-raise
+                yield self.stop(True)
+                raise
 
 
         # we need a timeout here even though start itself has a timeout
