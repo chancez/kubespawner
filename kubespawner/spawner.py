@@ -28,15 +28,23 @@ from jupyterhub.traitlets import Command
 from jupyterhub.utils import exponential_backoff
 from kubernetes import client
 from kubernetes.client.rest import ApiException
-from kubespawner.objects import (make_owner_reference, make_pod, make_pvc,
-                                 make_secret, make_service)
-from kubespawner.reflector import NamespacedResourceReflector
-from kubespawner.traitlets import Callable
-from traitlets import (Bool, Dict, Integer, List, Unicode, Union, default,
-                       observe, validate)
+from slugify import slugify
+from traitlets import (
+    Bool,
+    Dict,
+    Integer,
+    List,
+    Unicode,
+    Union,
+    default,
+    observe,
+    validate,
+)
 
 from .clients import shared_client
-from slugify import slugify
+from .objects import make_owner_reference, make_pod, make_pvc, make_secret, make_service
+from .reflector import NamespacedResourceReflector
+from .traitlets import Callable
 
 
 class PodReflector(NamespacedResourceReflector):
