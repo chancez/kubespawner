@@ -117,9 +117,10 @@ def check_up(url):
 
 
 @pytest.mark.asyncio
-async def test_spawn_start(kube_ns, kube_client, config, exec_python):
+async def test_spawn_start(kube_ns, kube_client, config, hub_pod, exec_python):
+    print(hub_pod)
     spawner = KubeSpawner(
-        hub=Hub(),
+        hub=Hub(ip=hub_pod.status.pod_ip),
         user=MockUser(),
         config=config,
         api_token="abc123",
@@ -165,16 +166,17 @@ async def test_spawn_start(kube_ns, kube_client, config, exec_python):
 
 
 @pytest.mark.asyncio
-async def test_spawn_internal_ssl(kube_ns, kube_client, ssl_hub, config, exec_python):
+async def test_spawn_internal_ssl(kube_ns, kube_client, ssl_app, hub_pod_ssl, config, exec_python):
+    print(hub_pod_ssl)
     spawner = KubeSpawner(
         config=config,
-        hub=Hub(),
+        hub=Hub(proto="https", ip="{name}.{namespace}.svc.cluster.local"),
         user=MockUser(),
         api_token="abc123",
         oauth_client_id="unused",
         internal_ssl=True,
-        internal_trust_bundles=ssl_hub.internal_trust_bundles,
-        internal_certs_location=ssl_hub.internal_certs_location,
+        internal_trust_bundles=ssl_app.internal_trust_bundles,
+        internal_certs_location=ssl_app.internal_certs_location,
     )
 
     # initialize ssl config
