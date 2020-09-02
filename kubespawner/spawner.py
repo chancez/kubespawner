@@ -1690,8 +1690,17 @@ class KubeSpawner(Spawner):
             yield self.pod_reflector.first_load_future
         data = self.pod_reflector.pods.get(self.pod_name, None)
         if data is not None:
-            if data.status.phase == 'Pending':
+            if data.status.phase != 'Running':
+                self.log.warning(
+                        'pod %s status.phase is %s: reason: %s, message: %s',
+                        self.pod_name, data.status.phase,
+                        data.status.reason, data.status.message,
+                )
+                # if a pod is failed, stop it now
+                if data.status.phase == 'Failed':
+                    yield self.stop(now=True)
                 return None
+
             ctr_stat = data.status.container_statuses
             if ctr_stat is None:  # No status, no container (we hope)
                 # This seems to happen when a pod is idle-culled.
