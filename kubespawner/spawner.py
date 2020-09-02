@@ -1591,6 +1591,29 @@ class KubeSpawner(Spawner):
         )
         return is_running
 
+    @gen.coroutine
+    def wait_for_pod_healthy(self):
+        def check_pod():
+            self.log.debug("fetching pod %s", self.pod_name)
+            pod = self.pod_reflector.pods.get(self.pod_name, None)
+            if pod.status.phase == 'Failed':
+                self.log.warning(
+                        'pod %s status.phase is %s: reason: %s, message: %s',
+                        self.pod_name, pod.status.phase,
+                        pod.status.reason, pod.status.message,
+                )
+                raise Exception("pod %s is Failed" % self.pod_name)
+            return self.is_pod_running(pod)
+
+        self.log.info("waiting for pod %s to be healthy", self.pod_name)
+        yield exponential_backoff(
+            check_pod,
+            'pod/%s did not start in %s seconds!' % (self.pod_name, self.start_timeout),
+            start_wait=1,
+            max_wait=10,
+            timeout=self.start_timeout,
+        )
+
     def pod_has_uid(self, pod):
         """
         Check if the given pod exists and has a UID
@@ -1658,11 +1681,20 @@ class KubeSpawner(Spawner):
         # have to wait for first load of data before we have a valid answer
         if not self.pod_reflector.first_load_future.done():
             yield self.pod_reflector.first_load_future
-        data = self.pod_reflector.pods.get(self.pod_name, None)
-        if data is not None:
-            if data.status.phase == 'Pending':
+        pod = self.pod_reflector.pods.get(self.pod_name, None)
+        if pod is not None:
+            if pod.status.phase == 'Failed':
+                self.log.warning(
+                        'pod %s status.phase is %s: reason: %s, message: %s',
+                        self.pod_name, pod.status.phase,
+                        pod.status.reason, pod.status.message,
+                )
+                yield self.stop(now=True)
+                return 1
+            if self.is_pod_running(self.pod_reflector.pods.get(self.pod_name, None)):
                 return None
-            ctr_stat = data.status.container_statuses
+
+            ctr_stat = pod.status.container_statuses
             if ctr_stat is None:  # No status, no container (we hope)
                 # This seems to happen when a pod is idle-culled.
                 return 1
@@ -1999,11 +2031,7 @@ class KubeSpawner(Spawner):
         # because the handler will have stopped waiting after
         # start_timeout, starting from a slightly earlier point.
         try:
-            yield exponential_backoff(
-                lambda: self.is_pod_running(self.pod_reflector.pods.get(self.pod_name, None)),
-                'pod/%s did not start in %s seconds!' % (self.pod_name, self.start_timeout),
-                timeout=self.start_timeout,
-            )
+            yield self.wait_for_pod_healthy()
         except TimeoutError:
             if self.pod_name not in self.pod_reflector.pods:
                 # if pod never showed up at all,
@@ -2013,6 +2041,10 @@ class KubeSpawner(Spawner):
                     self.pod_name,
                 )
                 self._start_watching_pods(replace=True)
+            raise
+        except Exception:
+            # cleanup on failure and re-raise
+            yield self.stop(True)
             raise
 
         pod = self.pod_reflector.pods[self.pod_name]
