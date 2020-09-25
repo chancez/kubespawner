@@ -1369,7 +1369,7 @@ class KubeSpawner(Spawner):
 
     def _expand_user_properties(self, template):
         raw_servername = self.name or ''
-        safe_servername = escapism.escape(raw_servername, safe=safe_chars, escape_char='-').lower()
+        safe_servername = escapism.escape(raw_servername, safe=self.safe_chars, escape_char='-').lower()
 
         legacy_escaped_username = ''.join([s if s in self.safe_chars else '-' for s in self.user.name.lower()])
         safe_username = escapism.escape(self.user.name, safe=self.safe_chars, escape_char='-').lower()
