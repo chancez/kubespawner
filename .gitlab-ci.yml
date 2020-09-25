@@ -3,7 +3,7 @@ image: python:latest
 run:
   script:
     # delete tags that break better-setuptools-git-version ordering
-    - git tag -l | grep '^v.*$' | xargs git tag -d
+    - git tag -l | grep '^v.*$' | xargs git tag -d || true
     - pip install twine better-setuptools-git-version
     - python setup.py sdist bdist_wheel
     - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python -m twine upload --repository-url https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/packages/pypi dist/*
