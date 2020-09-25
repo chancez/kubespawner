@@ -10,7 +10,11 @@ if v[:2] < (3, 6):
 
 setup(
     name='jupyterhub-kubespawner',
-    version='0.12.1.dev',
+    version_config={
+        "version_format": "{tag}.dev{sha}",
+        "starting_version": "0.12.0"
+    },
+    setup_requires=['better-setuptools-git-version'],
     install_requires=[
         'async_generator>=1.8',
         'escapism',
